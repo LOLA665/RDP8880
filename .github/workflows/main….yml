@@ -1,0 +1,70 @@
+name: Create Windows 11 VM with 56 CPU cores, 2TB SSD, 3D GPU and Tailscale VPN
+
+on:
+  workflow_dispatch:
+    inputs:
+      tailscale_auth_key:
+        description: 'Tailscale auth key'
+        required: true
+
+jobs:
+  create_vm_and_configure:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create VM Windows 11 with specified config
+        id: create_vm
+        run: |
+          response=$(curl -s -X POST https://api.examplecloud.com/v1/vms/create \
+            -H "Content-Type: application/json" \
+            -d '{
+              "os": "windows-11",
+              "cpu_cores": 56,
+              "ram_gb": 128,
+              "storage_gb": 2048,
+              "gpu": "virtio-3d",
+              "rdp_enabled": true
+            }')
+          echo "$response" > response.json
+          vm_id=$(jq -r '.id' response.json)
+          vm_ip=$(jq -r '.ip' response.json)
+          username=$(jq -r '.username' response.json)
+          password=$(jq -r '.password' response.json)
+
+          echo "vm_id=$vm_id" >> $GITHUB_OUTPUT
+          echo "vm_ip=$vm_ip" >> $GITHUB_OUTPUT
+          echo "username=$username" >> $GITHUB_OUTPUT
+          echo "password=$password" >> $GITHUB_OUTPUT
+
+      - name: Wait for VM startup (2 minutes)
+        run: sleep 120
+
+      - name: Configure Tailscale and Enable RDP
+        env:
+          VM_IP: ${{ steps.create_vm.outputs.vm_ip }}
+          VM_USER: ${{ steps.create_vm.outputs.username }}
+          VM_PASS: ${{ steps.create_vm.outputs.password }}
+          TAILSCALE_AUTH_KEY: ${{ github.event.inputs.tailscale_auth_key }}
+        run: |
+          pwsh -Command "
+            \$secpasswd = ConvertTo-SecureString \$env:VM_PASS -AsPlainText -Force
+            \$creds = New-Object System.Management.Automation.PSCredential(\$env:VM_USER, \$secpasswd)
+            Invoke-Command -ComputerName \$env:VM_IP -Credential \$creds -ScriptBlock {
+              Invoke-WebRequest -Uri https://tailscale.com/install.ps1 -OutFile install_tailscale.ps1
+              & ./install_tailscale.ps1
+              Start-Process 'tailscale.exe' -ArgumentList 'up --auth-key $using:TAILSCALE_AUTH_KEY --accept-routes --accept-dns' -NoNewWindow -Wait
+              Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0
+              Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'
+            }"
+
+      - name: Run VM for 6 hours
+        run: sleep 21600
+
+      - name: Stop VM (customize as needed)
+        run: echo "Stopping VM ${{ steps.create_vm.outputs.vm_id }}"
+
+      - name: Output VM details
+        run: |
+          echo "VM IP: ${{ steps.create_vm.outputs.vm_ip }}"
+          echo "Username: ${{ steps.create_vm.outputs.username }}"
+          echo "Password: ${{ steps.create_vm.outputs.password }}"
