@@ -1,0 +1,31 @@
+      - name: Create VM Windows 11
+        id: create_vm
+        run: |
+          http_status=$(curl -s -o response.json -w "%{http_code}" -X POST https://api.tucloudprovider.com/v1/vms/create \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.CLOUD_API_TOKEN }}" \
+            -d '{
+              "os": "windows-11",
+              "cpu_cores": 56,
+              "ram_gb": 128,
+              "storage_gb": 2048,
+              "gpu": "virtio-3d",
+              "rdp_enabled": true
+            }')
+
+          echo "HTTP status: $http_status"
+          if [ "$http_status" != "200" ]; then
+            echo "Error: API responded with status $http_status"
+            cat response.json
+            exit 1
+          fi
+
+          vm_id=$(jq -r '.id' response.json)
+          vm_ip=$(jq -r '.ip' response.json)
+          username=$(jq -r '.username' response.json)
+          password=$(jq -r '.password' response.json)
+
+          echo "vm_id=$vm_id" >> $GITHUB_OUTPUT
+          echo "vm_ip=$vm_ip" >> $GITHUB_OUTPUT
+          echo "username=$username" >> $GITHUB_OUTPUT
+          echo "password=$password" >> $GITHUB_OUTPUT
