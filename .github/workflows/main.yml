@@ -1,0 +1,67 @@
+name: Windows 11 VM 56 CPU, 2TB SSD, 3D GPU VirtIO, Tailscale VPN
+
+on:
+  workflow_dispatch:
+    inputs:
+      tailscale_auth_key:
+        description: 'Tailscale Auth Key'
+        required: true
+
+jobs:
+  create_vm_and_configure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Creează VM Windows 11 cu specificații
+        id: create_vm
+        run: |
+          response=$(curl -s -X POST https://api.examplecloud.com/v1/vms/create \
+            -H "Content-Type: application/json" \
+            -d '{
+              "os": "windows-11",
+              "cpu_cores": 56,
+              "ram_gb": 128,
+              "storage_gb": 2048,
+              "gpu": "virtio-3d",
+              "rdp_enabled": true
+            }')
+          vm_id=$(echo $response | jq -r '.id')
+          vm_ip=$(echo $response | jq -r '.ip')
+          username=$(echo $response | jq -r '.username')
+          password=$(echo $response | jq -r '.password')
+          echo "vm_id=$vm_id" >> $GITHUB_OUTPUT
+          echo "vm_ip=$vm_ip" >> $GITHUB_OUTPUT
+          echo "username=$username" >> $GITHUB_OUTPUT
+          echo "password=$password" >> $GITHUB_OUTPUT
+
+      - name: Așteaptă VM să pornească (2 minute)
+        run: sleep 120
+
+      - name: Configurează Tailscale și activează RDP în VM
+        env:
+          VM_IP: ${{ steps.create_vm.outputs.vm_ip }}
+          VM_USER: ${{ steps.create_vm.outputs.username }}
+          VM_PASS: ${{ steps.create_vm.outputs.password }}
+          TAILSCALE_AUTH_KEY: ${{ github.event.inputs.tailscale_auth_key }}
+        run: |
+          pwsh -Command "
+          \$secpasswd = ConvertTo-SecureString \$env:VM_PASS -AsPlainText -Force
+          \$cred = New-Object System.Management.Automation.PSCredential (\$env:VM_USER, \$secpasswd)
+          Invoke-Command -ComputerName \$env:VM_IP -Credential \$cred -ScriptBlock {
+            Invoke-WebRequest -Uri https://tailscale.com/install.ps1 -OutFile install_tailscale.ps1
+            & ./install_tailscale.ps1
+            Start-Process 'tailscale.exe' -ArgumentList \"up --auth-key $using:TAILSCALE_AUTH_KEY --accept-routes --accept-dns\" -NoNewWindow -Wait
+            Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server' -Name 'fDenyTSConnections' -Value 0
+            Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'
+          }"
+
+      - name: Rulează VM 6 ore
+        run: sleep 21600
+
+      - name: Oprește VM (înlocuiește cu comanda furnizorului)
+        run: echo "Oprire VM ${{ steps.create_vm.outputs.vm_id }}"
+
+      - name: Afișează detalii conectare
+        run: |
+          echo "IP VM: ${{ steps.create_vm.outputs.vm_ip }}"
+          echo "User: ${{ steps.create_vm.outputs.username }}"
+          echo "Parolă: ${{ steps.create_vm.outputs.password }}"
